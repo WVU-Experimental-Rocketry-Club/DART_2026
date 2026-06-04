@@ -1,0 +1,10 @@
+{
+  "_comment": "Default settings — override any value on the CLI (see python main.py --help)",
+  "cam_a": 0,
+  "cam_b": 1,
+  "serial_port": "",
+  "baud_rate": 115200,
+  "launch_lat": 32.9901,
+  "launch_lon": -106.9744,
+  "units": "imperial"
+}

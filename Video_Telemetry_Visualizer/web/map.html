@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ground Track</title>
+
+<link rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #04060f; overflow: hidden; }
+  #map { width: 100%; height: 100%; }
+
+  /* Keep satellite tiles at full brightness — no filter */
+
+  .leaflet-control-attribution {
+    background: rgba(0,0,0,0.65) !important;
+    color: #607090 !important;
+    font-size: 9px !important;
+  }
+  .leaflet-control-attribution a { color: #7090b0 !important; }
+
+  /* Zoom buttons — higher contrast */
+  .leaflet-control-zoom a {
+    background: rgba(8,12,30,0.85) !important;
+    color: #c0d8ff !important;
+    border: 1px solid #3a5a90 !important;
+    font-weight: bold;
+  }
+  .leaflet-control-zoom a:hover { background: rgba(20,35,70,0.95) !important; }
+
+  #hud {
+    position: absolute;
+    bottom: 10px; left: 10px;
+    z-index: 1000;
+    pointer-events: none;
+    background: rgba(4, 6, 18, 0.88);
+    color: #e0eeff;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    padding: 7px 12px;
+    border-radius: 4px;
+    border: 1px solid #3a5a90;
+    line-height: 2.0;
+    min-width: 230px;
+  }
+  #hud .label { color: #7090c0; }
+  #hud .val   { color: #ffffff; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="hud">
+  <span class="label">LAT&nbsp;&nbsp;</span><span id="h-lat" class="val">—</span><br>
+  <span class="label">LON&nbsp;&nbsp;</span><span id="h-lon" class="val">—</span><br>
+  <span class="label">ALT&nbsp;&nbsp;</span><span id="h-alt" class="val">—</span><span class="label"> ft</span>
+</div>
+
+<script>
+// Launch site: 2FQ6+G98 Saragosa, TX (decoded ~31.0397°N 103.5385°W)
+var LAUNCH_LAT =  31.0397;
+var LAUNCH_LON = -103.5385;
+
+var map = L.map("map", {
+  zoomControl: false,
+  attributionControl: true,
+}).setView([LAUNCH_LAT, LAUNCH_LON], 14);
+
+// ── Tile layers — two-layer stack ─────────────────────────────────────────
+//
+// Layer 1 (base):  ESRI satellite CDN — always present, fails silently offline.
+// Layer 2 (top):   Local tile cache served by main.py on port 8765.
+//                  Covers ESRI when tiles are downloaded; transparent on miss
+//                  so the ESRI base shows through.  NO errorTileUrl here —
+//                  Leaflet's errorTileUrl does NOT substitute {z}/{y}/{x}
+//                  (it is a literal string), so using a template there breaks
+//                  all tile fallbacks silently.
+// Layer 3:         ESRI labels overlay — small text tiles, loaded live.
+
+var LOCAL_TILES = "http://127.0.0.1:8765/tiles/{z}/{y}/{x}.jpg";
+var ESRI_TILES  = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+var ESRI_LABELS = "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+
+// Layer 1 — ESRI satellite (base, always present)
+L.tileLayer(ESRI_TILES, {
+  attribution: "Tiles &copy; Esri",
+  maxZoom: 19,
+}).addTo(map);
+
+// Layer 2 — local tile cache (transparent tile on miss → ESRI shows through)
+L.tileLayer(LOCAL_TILES, {
+  maxZoom: 15,
+}).addTo(map);
+
+// Layer 3 — labels overlay (live only — tiny bandwidth)
+L.tileLayer(ESRI_LABELS, { maxZoom: 19, opacity: 0.65 }).addTo(map);
+
+// Zoom control — bottom-right to clear the HUD
+L.control.zoom({ position: "bottomright" }).addTo(map);
+
+// ── Launch pad marker ──────────────────────────────────────────────────────
+var padIcon = L.divIcon({
+  className: "",
+  html: '<div style="width:14px;height:14px;background:#ffcc00;border-radius:50%;'
+      + 'border:2px solid #ff8800;box-shadow:0 0 8px #ffcc00;"></div>',
+  iconAnchor: [7, 7],
+  popupAnchor: [0, -10],
+});
+L.marker([LAUNCH_LAT, LAUNCH_LON], { icon: padIcon })
+  .bindTooltip("Launch Pad", { permanent: true, direction: "right",
+    className: "launch-tooltip" })
+  .addTo(map);
+
+// ── Ground track & rocket marker ───────────────────────────────────────────
+var track = L.polyline([], {
+  color: "#ff9500",
+  weight: 3,
+  opacity: 0.95,
+  lineJoin: "round",
+}).addTo(map);
+
+var rocketIcon = L.divIcon({
+  className: "",
+  html: '<div style="width:14px;height:14px;background:#ff3030;border-radius:50%;'
+      + 'border:2px solid #ff8080;box-shadow:0 0 10px #ff3030;"></div>',
+  iconAnchor: [7, 7],
+});
+var rocketMarker = L.marker([LAUNCH_LAT, LAUNCH_LON], { icon: rocketIcon }).addTo(map);
+
+// ── HUD ────────────────────────────────────────────────────────────────────
+var hLat = document.getElementById("h-lat");
+var hLon = document.getElementById("h-lon");
+var hAlt = document.getElementById("h-alt");
+
+function updatePosition(lat, lon, alt) {
+  var latlng = [lat, lon];
+  track.addLatLng(latlng);
+  rocketMarker.setLatLng(latlng);
+  map.panTo(latlng, { animate: true, duration: 0.4, easeLinearity: 0.5 });
+  hLat.textContent = lat.toFixed(5);
+  hLon.textContent = lon.toFixed(5);
+  hAlt.textContent = Math.round(alt).toLocaleString();
+}
+
+// ── QWebChannel bridge ─────────────────────────────────────────────────────
+if (typeof QWebChannel !== "undefined") {
+  new QWebChannel(qt.webChannelTransport, function(channel) {
+    var bridge = channel.objects.bridge;
+    bridge.map_update.connect(function(jsonStr) {
+      var d = JSON.parse(jsonStr);
+      updatePosition(d.lat, d.lon, d.alt);
+    });
+    // Re-measure the container once Qt has finished laying out the panel.
+    // Without this, Leaflet sometimes initialises at the wrong zoom because
+    // the QWebEngineView reports zero size before the splitter is finalised.
+    map.invalidateSize();
+    map.setView([LAUNCH_LAT, LAUNCH_LON], 14, { animate: false });
+    bridge.js_ready("map ready");
+  });
+}
+</script>
+</body>
+</html>

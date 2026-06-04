@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rocket 3D</title>
+<style>
+  html, body { margin: 0; background: #020208; overflow: hidden; }
+  canvas { display: block; }
+
+  #overlay {
+    position: absolute; top: 8px; left: 8px;
+    pointer-events: none;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    color: #d0e8ff;
+    line-height: 2.0;
+    background: rgba(4, 6, 20, 0.82);
+    padding: 7px 12px;
+    border-radius: 4px;
+    border: 1px solid #3a5a90;
+    min-width: 210px;
+  }
+  #ab-line {
+    font-size: 13px;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+  }
+  .ab-on  { color: #ccff00; text-shadow: 0 0 6px #88ff00; }
+  .ab-off { color: #5070a0; }
+  .dim    { color: #5070a0; }
+
+  #hint {
+    position: absolute; bottom: 8px; right: 8px;
+    pointer-events: none;
+    color: #1a2a4a;
+    font-family: monospace;
+    font-size: 10px;
+  }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <div id="ab-line" class="ab-off">AIRBRAKES: RETRACTED</div>
+  <div><span class="dim">ALT </span><span id="o-alt">—</span><span class="dim"> ft</span></div>
+  <div><span class="dim">SPD </span><span id="o-spd">—</span><span class="dim"> ft/s</span></div>
+</div>
+<div id="hint">drag to inspect · scroll to zoom</div>
+
+<!-- Three.js r128 core -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- OrbitControls addon for r128 -->
+<script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<!-- Qt WebChannel (injected by PySide6; guard below handles plain-browser dev) -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+
+<script>
+// ── Renderer & scene ───────────────────────────────────────────────────────
+var scene = new THREE.Scene();
+
+// Camera: 3/4 front view, pulled back enough to see the full 165" rocket
+var camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.05, 500);
+camera.position.set(5.0, 1.5, 11.0);
+camera.lookAt(0, 1.0, 0);
+
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x020208, 1);
+document.body.appendChild(renderer.domElement);
+
+// OrbitControls — manual inspection only, no auto-rotation
+var controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = false;
+controls.autoRotate    = false;
+controls.minDistance   = 6.0;
+controls.maxDistance   = 30.0;
+controls.target.set(0, 1.0, 0);
+controls.update();
+
+// ── Lighting — bright, even illumination ──────────────────────────────────
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+
+var keyLight = new THREE.DirectionalLight(0xfff4e0, 1.6);
+keyLight.position.set(5, 10, 6);
+scene.add(keyLight);
+
+var fillLight = new THREE.DirectionalLight(0xd0e8ff, 0.9);
+fillLight.position.set(-6, 2, -2);
+scene.add(fillLight);
+
+var groundBounce = new THREE.DirectionalLight(0xffe8c0, 0.35);
+groundBounce.position.set(0, -8, 4);
+scene.add(groundBounce);
+
+// ── Starfield ─────────────────────────────────────────────────────────────
+(function () {
+  var pts = [];
+  for (var i = 0; i < 3500; i++) {
+    var theta = Math.random() * Math.PI * 2;
+    var phi   = Math.acos(2 * Math.random() - 1);
+    var r     = 70 + Math.random() * 50;
+    pts.push(
+      r * Math.sin(phi) * Math.cos(theta),
+      r * Math.sin(phi) * Math.sin(theta),
+      r * Math.cos(phi)
+    );
+  }
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.2 })));
+})();
+
+// ── Real rocket dimensions ─────────────────────────────────────────────────
+//
+//   Total length : 165"   (nose tip → nozzle exit)
+//   Diameter     :  6.23" (body outer diameter)
+//   Nose cone    : 36.5"  Von Kármán
+//   4 fins       : root 15", tip 3", span 7.75", LE sweep 10"
+//   4 airbrakes  : 3"×3" panels, 100" from nose tip
+//   No boat tail
+//
+//   Scale factor S keeps body radius = 0.18 model units (a comfortable visual size).
+//   All geometry is derived from the constants below — edit here to update the model.
+
+var S = 1.0 / (3.115 / 0.18);   // 0.057787  model units per inch
+
+var R = 3.115 * S;               // 0.18000   body outer radius
+
+// Major lengths
+var BODY_LEN   = 124.0 * S;   // 7.165  — main airframe tube
+var NOSE_LEN   =  36.5 * S;   // 2.109  — Von Kármán nose cone
+var NOZZLE_LEN =   4.5 * S;   // 0.260  — nozzle stub below body
+
+// Derived Y positions along the rocket axis (origin = body tube centre)
+var BODY_TOP = BODY_LEN / 2;          // +3.583  body/shoulder junction
+var BODY_BOT = -BODY_TOP;             // -3.583  aft end of body tube
+var NOSE_TIP = BODY_TOP + NOSE_LEN;   // +5.692  tip of nose cone
+
+// Fin dimensions
+var FIN_ROOT  = 15.0  * S;   // 0.867   root chord
+var FIN_TIP   =  3.0  * S;   // 0.173   tip chord
+var FIN_SPAN  =  7.75 * S;   // 0.448   semi-span (outward from body surface)
+var FIN_SWEEP = 10.0  * S;   // 0.578   leading-edge sweep (root LE → tip LE, aft)
+
+// Airbrake panels
+var AB_SIZE  =  3.0 * S;                              // 0.173  panel side length (3"×3")
+var AB_Y     = BODY_TOP - (100.0 * S - NOSE_LEN);    // -0.087  100" from nose tip
+
+// ── Materials ─────────────────────────────────────────────────────────────
+var MAT_BODY  = new THREE.MeshPhongMaterial({ color: 0xe2e2e2, shininess: 70  });
+var MAT_NOSE  = new THREE.MeshPhongMaterial({ color: 0xcc2200, shininess: 90  });
+var MAT_FIN   = new THREE.MeshPhongMaterial({ color: 0xcc2200, shininess: 55, side: THREE.DoubleSide });
+var MAT_BAND  = new THREE.MeshPhongMaterial({ color: 0x0044cc, shininess: 80  });
+var MAT_METAL = new THREE.MeshPhongMaterial({ color: 0x666666, shininess: 120 });
+
+// ── Rocket group ──────────────────────────────────────────────────────────
+var rocketGroup = new THREE.Group();
+scene.add(rocketGroup);
+
+// ── Body tube ─────────────────────────────────────────────────────────────
+rocketGroup.add(new THREE.Mesh(
+  new THREE.CylinderGeometry(R, R, BODY_LEN, 40),
+  MAT_BODY
+));
+
+// ── Colour band — 60" from nose tip (23.5" into body tube) ────────────────
+var bandMesh = new THREE.Mesh(
+  new THREE.CylinderGeometry(R + 0.004, R + 0.004, 0.22, 40),
+  MAT_BAND
+);
+bandMesh.position.y = BODY_TOP - 23.5 * S;   // 2.224
+rocketGroup.add(bandMesh);
+
+// ── Von Kármán nose cone — LatheGeometry profile ──────────────────────────
+//
+//   θ(t)  = arccos(1 − 2t)          t ∈ [0, 1], 0 = tip, 1 = base
+//   r(t)  = R/√π · √(θ − sin(2θ)/2)
+//   y(t)  = NOSE_LEN · (1 − t)      y=NOSE_LEN at tip, y=0 at base
+//
+//   Mesh is positioned at BODY_TOP so its base (y=0) meets the body tube.
+
+(function () {
+  var pts = [];
+  var N = 28;
+  for (var i = 0; i <= N; i++) {
+    var t     = i / N;
+    var theta = Math.acos(Math.max(-1.0, Math.min(1.0, 1.0 - 2.0 * t)));
+    var r     = (R / Math.sqrt(Math.PI)) * Math.sqrt(Math.max(0, theta - Math.sin(2 * theta) / 2));
+    pts.push(new THREE.Vector2(r, NOSE_LEN * (1.0 - t)));
+  }
+  var noseMesh = new THREE.Mesh(new THREE.LatheGeometry(pts, 36), MAT_NOSE);
+  noseMesh.position.y = BODY_TOP;
+  rocketGroup.add(noseMesh);
+})();
+
+// ── Nozzle (no boat tail) ─────────────────────────────────────────────────
+var nozzle = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.072, 0.105, NOZZLE_LEN, 24),
+  MAT_METAL
+);
+nozzle.position.y = BODY_BOT - NOZZLE_LEN / 2;
+rocketGroup.add(nozzle);
+
+// ── 4 swept fins ──────────────────────────────────────────────────────────
+//
+//   Fin planform in the local XY plane:
+//     X = distance outward from body surface (span direction)
+//     Y = position along rocket body (positive = toward nose)
+//
+//   (0,         0          )  root trailing edge  — at body bottom
+//   (0,         FIN_ROOT   )  root leading edge
+//   (FIN_SPAN,  FIN_ROOT−FIN_SWEEP       )  tip leading edge
+//   (FIN_SPAN,  FIN_ROOT−FIN_SWEEP−FIN_TIP)  tip trailing edge
+
+for (var i = 0; i < 4; i++) {
+  var finAngle = (i / 4) * Math.PI * 2;
+
+  var shape = new THREE.Shape();
+  shape.moveTo(0.0,      0.0);
+  shape.lineTo(0.0,      FIN_ROOT);
+  shape.lineTo(FIN_SPAN, FIN_ROOT - FIN_SWEEP);
+  shape.lineTo(FIN_SPAN, FIN_ROOT - FIN_SWEEP - FIN_TIP);
+  shape.closePath();
+
+  var finGeo = new THREE.ExtrudeGeometry(shape, { depth: 0.025, bevelEnabled: false });
+  var fin    = new THREE.Mesh(finGeo, MAT_FIN);
+
+  fin.position.set(
+    Math.cos(finAngle) * R,
+    BODY_BOT,
+    Math.sin(finAngle) * R
+  );
+  fin.rotation.y = -finAngle - Math.PI / 2;
+
+  rocketGroup.add(fin);
+}
+
+// ── Airbrake panels (4 × pivot-hinge mechanism) ───────────────────────────
+//
+//   Each airbrake is a 3"×3" panel (AB_SIZE × AB_SIZE) at AB_Y.
+//   Panels are offset 45° from fins.
+//
+//   pivotGroup.rotation.z = MAX_PIVOT  → retracted (along body)
+//   pivotGroup.rotation.z = 0          → deployed (radially outward)
+
+var AIRBRAKES = [];
+
+for (var i = 0; i < 4; i++) {
+  var abAngle = (i / 4) * Math.PI * 2 + Math.PI / 4;   // 45° from fins
+
+  // Housing slot (visual only)
+  var housing = new THREE.Mesh(
+    new THREE.BoxGeometry(AB_SIZE * 0.90, AB_SIZE * 0.90, 0.050),
+    new THREE.MeshPhongMaterial({ color: 0x2a2a2a, shininess: 80 })
+  );
+  housing.position.set(
+    Math.cos(abAngle) * (R + 0.004),
+    AB_Y,
+    Math.sin(abAngle) * (R + 0.004)
+  );
+  housing.rotation.y = -abAngle;
+  rocketGroup.add(housing);
+
+  // Pivot group — hinge at body surface
+  var pivotGroup = new THREE.Group();
+  pivotGroup.position.set(
+    Math.cos(abAngle) * (R + 0.001),
+    AB_Y,
+    Math.sin(abAngle) * (R + 0.001)
+  );
+  pivotGroup.rotation.y = -abAngle;
+  rocketGroup.add(pivotGroup);
+
+  // Panel mesh — inner edge at pivot (x=0), extends radially outward.
+  // Geometry is thin in Y (0.040) so the panel lies HORIZONTAL (perpendicular
+  // to the rocket axis) when deployed, presenting its face to the airflow.
+  var panelMat = new THREE.MeshPhongMaterial({ color: 0x222222, shininess: 120 });
+  var panelMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(AB_SIZE, 0.040, AB_SIZE),
+    panelMat
+  );
+  panelMesh.position.x = AB_SIZE / 2;   // centre panel on hinge
+  pivotGroup.add(panelMesh);
+
+  // Start retracted: negative Z rotation folds the panel AFT (toward nozzle).
+  // Deploying sweeps from -MAX_PIVOT → 0, so the panel hinges UPWARD (toward
+  // nose) as it extends — matching the real mechanism.
+  pivotGroup.rotation.z = -Math.PI * 0.48;
+
+  AIRBRAKES.push({ pivot: pivotGroup, mat: panelMat });
+}
+
+// ── Engine plume (simple emissive cone) ───────────────────────────────────
+var PLUME_MAT = new THREE.MeshBasicMaterial({
+  color: 0xff6600,
+  transparent: true,
+  opacity: 0.0,
+  depthWrite: false,
+});
+var plume = new THREE.Mesh(
+  new THREE.ConeGeometry(0.085, 0.60, 16),
+  PLUME_MAT
+);
+plume.rotation.x = Math.PI;   // point downward
+plume.position.y  = BODY_BOT - NOZZLE_LEN - 0.32;
+rocketGroup.add(plume);
+
+// ── Deployment animation state ────────────────────────────────────────────
+var deployLevel  = 0.0;   // 0 = retracted, 1 = deployed
+var targetDeploy = 0.0;
+
+var DEPLOY_RATE = 2.0;             // full travel in 0.5 s
+var MAX_PIVOT   = Math.PI * 0.48;  // retracted angle
+
+function tickAirbrakes(dt) {
+  var rate = DEPLOY_RATE;
+  if (deployLevel < targetDeploy) {
+    deployLevel = Math.min(targetDeploy, deployLevel + rate * dt);
+  } else if (deployLevel > targetDeploy) {
+    deployLevel = Math.max(targetDeploy, deployLevel - rate * dt);
+  }
+
+  // Negative: panels fold aft when retracted, hinge upward (toward nose) on deploy
+  var pivotAngle = -(1.0 - deployLevel) * MAX_PIVOT;
+
+  AIRBRAKES.forEach(function(ab) {
+    ab.pivot.rotation.z = pivotAngle;
+    // Blend from dark grey → vivid orange as panels deploy
+    var r = Math.round(0x22 + deployLevel * (0xff - 0x22));
+    var g = Math.round(0x22 + deployLevel * (0x77 - 0x22));
+    var b = Math.round(0x22 + deployLevel * (0x00 - 0x22));
+    ab.mat.color.setRGB(r / 255, g / 255, b / 255);
+    // Strong emissive glow visible against any background
+    ab.mat.emissive.setRGB(deployLevel * 0.55, deployLevel * 0.22, 0.0);
+    ab.mat.shininess = 60 + deployLevel * 80;
+  });
+}
+
+var plumeOn = false;
+
+function setPlume(on) {
+  plumeOn = on;
+  if (!on) { PLUME_MAT.opacity = 0.0; }
+}
+
+// ── Render loop ───────────────────────────────────────────────────────────
+var lastTime = performance.now();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  var now = performance.now();
+  var dt  = Math.min((now - lastTime) / 1000.0, 0.1);
+  lastTime = now;
+
+  tickAirbrakes(dt);
+
+  if (plumeOn) {
+    PLUME_MAT.opacity = 0.5 + Math.random() * 0.38;
+    plume.scale.y     = 0.80 + Math.random() * 0.40;
+    plume.scale.x     = plume.scale.z = 0.9 + Math.random() * 0.22;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── Resize ────────────────────────────────────────────────────────────────
+window.addEventListener("resize", function() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ── Telemetry bridge ──────────────────────────────────────────────────────
+var elAb  = document.getElementById("ab-line");
+var elAlt = document.getElementById("o-alt");
+var elSpd = document.getElementById("o-spd");
+
+function applyTelemetry(data) {
+  var dep = data.airbrake === 1;
+  targetDeploy = dep ? 1.0 : 0.0;
+
+  elAb.textContent = dep ? "AIRBRAKES: DEPLOYED" : "AIRBRAKES: RETRACTED";
+  elAb.className   = dep ? "ab-on" : "ab-off";
+
+  elAlt.textContent = Math.round(data.alt).toLocaleString();
+  elSpd.textContent = Math.round(data.spd).toLocaleString();
+
+  // Show plume during motor burn: speed rising, low altitude
+  setPlume(data.spd > 60 && data.alt < 2200 && data.alt > 10);
+}
+
+if (typeof QWebChannel !== "undefined") {
+  new QWebChannel(qt.webChannelTransport, function(channel) {
+    channel.objects.bridge.rocket_update.connect(function(jsonStr) {
+      applyTelemetry(JSON.parse(jsonStr));
+    });
+    channel.objects.bridge.js_ready("rocket ready");
+  });
+}
+</script>
+</body>
+</html>

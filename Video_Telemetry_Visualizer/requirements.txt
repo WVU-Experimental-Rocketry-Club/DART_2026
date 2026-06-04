@@ -1,0 +1,14 @@
+# IREC Ground Station — Python dependencies
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# On Linux you may also need system packages for QtWebEngine:
+#   sudo apt install libqt6webenginewidgets6  (Debian/Ubuntu)
+#   sudo dnf install qt6-qtwebengine          (Fedora/RHEL)
+
+pyside6>=6.6.0
+pyserial>=3.5
+opencv-python>=4.8.0
+pyqtgraph>=0.13.3
+numpy>=1.24.0
