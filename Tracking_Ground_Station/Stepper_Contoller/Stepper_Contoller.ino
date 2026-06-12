@@ -1,22 +1,8 @@
-#include <MultiStepper.h>
-#include <AccelStepper.h>
-#include <Wire.h> //Needed for I2C to GNSS
 
-#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
-#include <Wire.h>
+#include "Stepper_Controller.h"
 
-#define NUM_STEPPERS 2
-#define PPR 400
-#define MAX_verticle_angle 89
-#define MAX_AZIMUTH 180
-#define EARTH_RADIUS 6378
-SFE_UBLOX_GNSS myGNSS;
 
-typedef struct gps_location{
-  double lat;
-  double lon;
-  double alt;
-}gps_location;
+
 
 
 AccelStepper stepper[NUM_STEPPERS] =
@@ -52,7 +38,7 @@ int connect_gps(){
   Returns a struct gps_location that contains lat, long, & alt
   of the ground station.
 */
-struct gps_location ground_station_gps(){
+gps_location ground_station_gps(){
   struct gps_location location;
   /*
   location.lat = myGNSS.getLatitude() * 10000000;
@@ -67,7 +53,7 @@ struct gps_location ground_station_gps(){
 
 // Filled with dummy values for now but will work the same once rex 
 // gets it working
-struct gps_location rocket_gps(){
+gps_location rocket_gps(){
   struct gps_location rocket;
   rocket.lat = 32.0050;
   rocket.lon = -102.0800;
@@ -146,37 +132,6 @@ void step_to_rocket(double verticle_angle, double azimuth){
 
   
 }
-void setup() {
-  // put your setup code here, to run once:
-  if (connect_gps() == 1){
-    //Failed to connect to gps
-    Serial.println("Failed to Connect to GPS. Check Connection");
-    /*
-    while(1){
-      Serial.println("Failed to Connect to GPS. Check Connection");
-      delay(5000);
-    }
-    */
-  }
-  Serial2.setTX(4);
-  Serial2.setRX(5);
-  Serial2.begin(31250);
-
-  //Set up Steppers
-  for(int i = 0; i<NUM_STEPPERS; i++){
-    steppers.addStepper(stepper[i]);
-  }
-}
-
-void loop() {
-  // put your main code here, to run repeatedly:
-  /*
-  * Find the azimuth between the ground station and the 
-  */
-  double azimuth = get_azimuth();
-  Serial.println(azimuth);
 
 
-  
-  
-}
+
