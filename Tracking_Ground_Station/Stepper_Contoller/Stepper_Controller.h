@@ -9,8 +9,8 @@
 
 #define NUM_STEPPERS 2
 #define PPR 400
-#define MAX_verticle_angle 89
-#define MAX_AZIMUTH 180
+#define MAX_PHI 89
+#define MAX_THETA 180
 #define EARTH_RADIUS 6378
 SFE_UBLOX_GNSS myGNSS;
 
@@ -66,5 +66,12 @@ double get_verticle_angle();
  *@return none
 */
 void step_to_rocket(double verticle_angle, double azimuth);
+
+struct location_vector get_rocket_vector();
+
+struct location_vector get_ground_vector();
+
+double get_magnitude(location_vector one, location_vector two);
+
 
 #endif

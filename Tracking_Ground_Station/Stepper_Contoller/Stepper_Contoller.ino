@@ -4,7 +4,6 @@
 
 
 
-
 AccelStepper stepper[NUM_STEPPERS] =
 {
   AccelStepper(AccelStepper::DRIVER, 9, 8), // step, dir    verticle_angle
@@ -13,8 +12,6 @@ AccelStepper stepper[NUM_STEPPERS] =
 
 MultiStepper steppers;
 
-double total_verticle_angle = 0;
-double total_azimuth = 0;
 
 /*
   Initializes and connect to the UBLOX GPS
@@ -132,6 +129,44 @@ void step_to_rocket(double verticle_angle, double azimuth){
 
   
 }
+typedef struct location_vector{
+double x;
+double y;
+double z;
+}location_vector;
+//converting lat,long to x,y
+//lat(deg)->rad*RADIUS_EARTH
+
+struct location_vector get_rocket_vector(){
+  gps_location rocket = rocket_gps();
+  location_vector rocket_vector;
+  rocket_vector.x = (rocket.lat*PI/180)*EARTH_RADIUS;
+  rocket_vector.y = (rocket.lon*PI/180)*EARTH_RADIUS;
+  rocket_vector.z = rocket.alt;
+
+  return rocket_vector;
+}
+
+struct location_vector get_ground_vector(){
+  gps_location ground = ground_station_gps();
+  location_vector ground_vector;
+  ground_vector.x = (ground.lat*PI/180)*EARTH_RADIUS;
+  ground_vector.y = (ground.lon*PI/180)*EARTH_RADIUS;
+  ground_vector.z = ground.alt;
+
+  return ground_vector;
+}
+
+double get_magnitude(location_vector one, location_vector two){
+  double del_x = two.x-one.x;
+  double del_y = two.y-one.y;
+
+  double magnitude = sqrt(pow(del_x,2)+pow(del_y,2));
+
+  return magnitude;
+  
+}
+
 
 
 
